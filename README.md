@@ -80,7 +80,11 @@ Proposed AI Response or Action
 
 ---
 
-# WA-OS (Harmony-Oriented AI Governance Architecture)
+# WA-OS
+
+**Harmony-Oriented AI Governance Architecture**
+
+**A pre-action decision protocol for AI systems.**
 
 （プロジェクトの概要・要約）
 
