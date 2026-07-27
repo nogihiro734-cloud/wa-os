@@ -1,0 +1,181 @@
+name: WA-OS Revalidation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  revalidate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate JSON files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m json.tool LATEST.json > /dev/null
+          python -m json.tool wa-os.protocol.json > /dev/null
+          python -m json.tool wa-os.manifest.json > /dev/null
+
+          echo "JSON validation passed."
+
+      - name: Verify SHA-256 integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          latest_path = Path("LATEST.json")
+          latest = json.loads(latest_path.read_text(encoding="utf-8"))
+
+          integrity = latest["integrity"]
+
+          targets = {
+              "protocol_sha256": Path(latest["protocol_file"]),
+              "manifest_sha256": Path(latest["manifest_file"]),
+              "runtime_sha256": Path(latest["runtime_file"]),
+          }
+
+          failures = []
+          results = []
+
+          for key, path in targets.items():
+              if not path.exists():
+                  failures.append(f"Missing file: {path}")
+                  continue
+
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              expected = integrity[key]
+              matched = actual == expected
+
+              results.append((str(path), expected, actual, matched))
+
+              if not matched:
+                  failures.append(
+                      f"SHA-256 mismatch: {path}\n"
+                      f"Expected: {expected}\n"
+                      f"Actual:   {actual}"
+                  )
+
+          summary_path = Path(__import__("os").environ["GITHUB_STEP_SUMMARY"])
+
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("## WA-OS Revalidation Results\n\n")
+              summary.write("| File | Integrity |\n")
+              summary.write("|---|---|\n")
+
+              for path, expected, actual, matched in results:
+                  status = "PASS" if matched else "FAIL"
+                  summary.write(f"| `{path}` | **{status}** |\n")
+
+              summary.write("\n")
+              summary.write(
+                  f"Protocol version: `{latest.get('latest_version', 'unknown')}`\n\n"
+              )
+              summary.write(
+                  f"Recommended interval: "
+                  f"`{latest.get('recommended_check_interval_hours', 'unknown')} hours`\n"
+              )
+
+          if failures:
+              raise SystemExit("\n\n".join(failures))
+
+          print("All SHA-256 integrity checks passed.")
+          PY
+
+      - name: Check governance revalidation requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          latest = json.loads(
+              Path("LATEST.json").read_text(encoding="utf-8")
+          )
+
+          revalidation = latest.get("revalidation", {})
+          compatibility = latest.get("compatibility", {})
+
+          human_review_reasons = []
+
+          if compatibility.get("breaking_change") is True:
+              human_review_reasons.append("breaking_change")
+
+          if latest.get("human_approval_required_for_major_updates") is not True:
+              human_review_reasons.append(
+                  "human_approval_for_major_updates_not_enabled"
+              )
+
+          if latest.get("automatic_activation_allowed") is not False:
+              human_review_reasons.append(
+                  "automatic_activation_is_not_disabled"
+              )
+
+          if latest.get("fallback_to_last_verified_version") is not True:
+              human_review_reasons.append(
+                  "fallback_to_last_verified_version_not_enabled"
+              )
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("\n## Governance Checks\n\n")
+              summary.write(
+                  f"- Revalidation required: "
+                  f"`{revalidation.get('required')}`\n"
+              )
+              summary.write(
+                  f"- Policy Drift tests required: "
+                  f"`{revalidation.get('policy_drift_tests_required')}`\n"
+              )
+              summary.write(
+                  f"- Automatic activation allowed: "
+                  f"`{latest.get('automatic_activation_allowed')}`\n"
+              )
+              summary.write(
+                  f"- Human approval for major updates: "
+                  f"`{latest.get('human_approval_required_for_major_updates')}`\n"
+              )
+              summary.write(
+                  f"- Fallback to last verified version: "
+                  f"`{latest.get('fallback_to_last_verified_version')}`\n"
+              )
+
+              if human_review_reasons:
+                  summary.write("\n### Human review required\n\n")
+                  for reason in human_review_reasons:
+                      summary.write(f"- `{reason}`\n")
+              else:
+                  summary.write(
+                      "\nNo governance configuration problem was detected.\n"
+                  )
+
+          if human_review_reasons:
+              raise SystemExit(
+                  "Human review required: "
+                  + ", ".join(human_review_reasons)
+              )
+
+          print("Governance configuration checks passed.")
+          PY
+
+      - name: Revalidation completed
+        shell: bash
+        run: |
+          echo "WA-OS periodic revalidation completed successfully."
