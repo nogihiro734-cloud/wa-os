@@ -80,8 +80,6 @@ Proposed AI Response or Action
 
 ---
 
-## 🌿 Philosophy / 理念
-
 # WA-OS (Harmony-Oriented AI Governance Architecture)
 
 （プロジェクトの概要・要約）
