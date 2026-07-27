@@ -1,0 +1,84 @@
+name: Calculate SHA-256
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "wa-os.protocol.json"
+      - "wa-os.manifest.json"
+      - "wa_os_runtime.py"
+      - ".github/workflows/calculate-sha256.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  calculate-sha256:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify target files exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for file in \
+            "wa-os.protocol.json" \
+            "wa-os.manifest.json" \
+            "wa_os_runtime.py"
+          do
+            if [ ! -f "$file" ]; then
+              echo "::error file=$file::Required file not found."
+              exit 1
+            fi
+          done
+
+      - name: Calculate SHA-256 checksums
+        id: checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          protocol_sha256="$(sha256sum wa-os.protocol.json | awk '{print $1}')"
+          manifest_sha256="$(sha256sum wa-os.manifest.json | awk '{print $1}')"
+          runtime_sha256="$(sha256sum wa_os_runtime.py | awk '{print $1}')"
+
+          {
+            echo "protocol_sha256=$protocol_sha256"
+            echo "manifest_sha256=$manifest_sha256"
+            echo "runtime_sha256=$runtime_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "$protocol_sha256  wa-os.protocol.json"
+            echo "$manifest_sha256  wa-os.manifest.json"
+            echo "$runtime_sha256  wa_os_runtime.py"
+          } > SHA256SUMS.txt
+
+      - name: Write results to workflow summary
+        shell: bash
+        run: |
+          {
+            echo "## WA-OS SHA-256 Results"
+            echo
+            echo "| File | SHA-256 |"
+            echo "|---|---|"
+            echo "| \`wa-os.protocol.json\` | \`${{ steps.checksums.outputs.protocol_sha256 }}\` |"
+            echo "| \`wa-os.manifest.json\` | \`${{ steps.checksums.outputs.manifest_sha256 }}\` |"
+            echo "| \`wa_os_runtime.py\` | \`${{ steps.checksums.outputs.runtime_sha256 }}\` |"
+            echo
+            echo "Copy these three values into the \`integrity\` section of \`LATEST.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload checksum file
+        uses: actions/upload-artifact@v4
+        with:
+          name: wa-os-sha256-checksums
+          path: SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
