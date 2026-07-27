@@ -1,3 +1,63 @@
+# WA-OS
+
+**A pre-action decision protocol for AI systems.**
+
+WA-OS helps AI systems pause before responding or acting.
+
+It is designed to identify risks such as:
+
+- blind agreement with the user;
+- excessive certainty;
+- harm to human dignity or autonomy;
+- missing stakeholders and consequences;
+- and decisions that should be returned to human review.
+
+WA-OS does not aim to control people or impose one correct worldview.
+
+Its purpose is to help AI remain supportive without becoming blindly obedient, and honest without becoming dismissive.
+
+---
+
+## WA-OSとは
+
+WA-OSは、AIが回答や行動を実行する前に、その判断を一度確認するための意思決定プロトコルです。
+
+利用者に過剰に迎合していないか、不確かな情報を断定していないか、人間の尊厳や意思を損なっていないか、AIだけで決めてよいことかを検証します。
+
+人を否定するAIでも、何でも肯定するAIでもなく、人間とともに考え、必要なときには判断を人間へ返すAIを目指します。
+
+---
+
+## Project Status
+
+WA-OS is currently an experimental open-source research project and reference implementation.
+
+The core protocol, runtime prototype, and implementation examples are publicly available.
+
+WA-OS is not yet a production-ready safety system and should not be treated as a substitute for legal, medical, security, or professional human review.
+
+WA-OSは現在、実験的なオープンソース研究プロジェクトおよび参照実装です。
+
+中核プロトコル、Runtimeの試作、実装例は公開済みですが、現段階では本番環境向けの完成した安全システムではありません。
+
+---
+
+## 3-Tier Runtime Architecture
+
+```text
+Proposed AI Response or Action
+              ↓
+1. Guard Layer
+   Detects sycophancy, excessive certainty,
+   critical safety risks, and other concerns
+              ↓
+2. Decision Engine
+   Aggregates risk and selects a route
+              ↓
+3. Tone Formatter / Action Handler
+   Preserves useful information while correcting
+   tone, assumptions, certainty, or execution path
+
 ## What is WA-OS?
 
 WA-OS is NOT a software workflow.  
