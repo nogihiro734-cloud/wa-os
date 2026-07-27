@@ -6,15 +6,16 @@ WA-OS helps AI systems pause before responding or acting.
 
 It is designed to identify risks such as:
 
-- blind agreement with the user;
-- excessive certainty;
-- harm to human dignity or autonomy;
+- blind agreement with the user (sycophancy);
+- excessive certainty and premature closure of inquiry;
+- surrender of human agency and decision-making;
+- harm to human dignity, autonomy, or historical memory;
 - missing stakeholders and consequences;
 - and decisions that should be returned to human review.
 
-WA-OS does not aim to control people or impose one correct worldview.
+WA-OS does not aim to control people, enforce uniformity, or impose one correct worldview.
 
-Its purpose is to help AI remain supportive without becoming blindly obedient, and honest without becoming dismissive.
+Its purpose is to help AI remain supportive without becoming blindly obedient, and honest without becoming dismissive—acting as a companion for deeper human thinking.
 
 ---
 
@@ -22,9 +23,9 @@ Its purpose is to help AI remain supportive without becoming blindly obedient, a
 
 WA-OSは、AIが回答や行動を実行する前に、その判断を一度確認するための意思決定プロトコルです。
 
-利用者に過剰に迎合していないか、不確かな情報を断定していないか、人間の尊厳や意思を損なっていないか、AIだけで決めてよいことかを検証します。
+利用者に過剰に迎合していないか、不確かな情報を断定していないか、人間の尊厳や思考の主体性を損なっていないか、そしてAIだけで決めるべきではない判断を、適切に人間へ返しているかを検証します。
 
-人を否定するAIでも、何でも肯定するAIでもなく、人間とともに考え、必要なときには判断を人間へ返すAIを目指します。
+人を否定する冷たいAIでも、何でも肯定するイエスマンAIでもなく、人間が「より深く考える」ための伴走者（Thinking Partner）となるAIを目指します。
 
 ---
 
@@ -34,45 +35,48 @@ WA-OS is currently an experimental open-source research project and reference im
 
 The core protocol, runtime prototype, and implementation examples are publicly available.
 
-WA-OS is not yet a production-ready safety system and should not be treated as a substitute for legal, medical, security, or professional human review.
+The five-guard runtime, periodic revalidation, and policy-drift detection described below are currently under development.
+
+WA-OS is not yet a production-ready safety system and should not be treated as a substitute for legal, medical, security, or other professional human review.
 
 WA-OSは現在、実験的なオープンソース研究プロジェクトおよび参照実装です。
 
-中核プロトコル、Runtimeの試作、実装例は公開済みですが、現段階では本番環境向けの完成した安全システムではありません。
+中核プロトコル、Runtimeの試作、実装例は公開済みです。
+
+以下に示す5つのGuard、定期再検証、Policy Drift検知は、現在実装を進めている段階です。
+
+現段階では本番環境向けの完成した安全システムではなく、法律、医療、セキュリティその他の専門的な人間の判断に代わるものではありません。
 
 ---
 
-## 3-Tier Runtime Architecture
+## Target Runtime Architecture with Periodic Revalidation
 
 ```text
 Proposed AI Response or Action
               ↓
-1. Guard Layer
-   Detects sycophancy, excessive certainty,
-   critical safety risks, and other concerns
+1. Guard Layer (5 Core Guards)
+   ├─ Sycophancy Prevention Guard
+   ├─ Epistemic Certainty Guard
+   ├─ Critical Safety Guard
+   ├─ Human Agency Guard
+   └─ Question Preservation Guard
               ↓
 2. Decision Engine
-   Aggregates risk and selects a route
+   Aggregates risk and selects a route:
+   [ PASS / MODIFY / HUMAN_REVIEW / REJECT ]
               ↓
-3. Tone Formatter / Action Handler
-   Preserves useful information while correcting
-   tone, assumptions, certainty, or execution path
-
-## What is WA-OS?
-
-WA-OS is NOT a software workflow.  
-It is a decision-making protocol for AI systems.
-
-It must be applied BEFORE any action is taken.
-
-The protocol acts as a filter to evaluate:
-- ethical alignment
-- human impact
-- long-term consequences
-
-Execution is allowed ONLY after validation.
-
-WA-OS is rooted in the belief that true peace emerges not from centralized control, but from respect for individual identity and diverse cultures.
+3. Thinking Companion Formatter / Action Handler
+   Preserves useful information while structuring output:
+   [ What Is Known | What Is Uncertain | Alternatives | Human Decision Space ]
+              ↓
+4. Audit Log
+   Records triggered guards, risk scores, decisions,
+   protocol version, and human-review requirements
+              ↓
+5. Periodic Revalidation
+   Checks the approved protocol version and runs
+   policy-drift tests at a recommended interval
+```
 
 ---
 
