@@ -1,0 +1,47 @@
+{
+  "protocol": "WA-OS",
+  "latest_version": "1.5.0-draft",
+  "status": "experimental",
+  "published_at": "2026-07-27T00:00:00Z",
+  "protocol_file": "wa-os.protocol.json",
+  "manifest_file": "wa-os.manifest.json",
+  "runtime_file": "wa_os_runtime.py",
+  "recommended_check_interval_hours": 168,
+  "automatic_download_allowed": true,
+  "automatic_activation_allowed": false,
+  "human_approval_required_for_major_updates": true,
+  "fallback_to_last_verified_version": true,
+  "integrity": {
+    "algorithm": "sha256",
+    "protocol_sha256": "TO_BE_ADDED",
+    "manifest_sha256": "TO_BE_ADDED",
+    "runtime_sha256": "TO_BE_ADDED"
+  },
+  "compatibility": {
+    "minimum_runtime_version": "1.5.0-draft",
+    "breaking_change": false
+  },
+  "revalidation": {
+    "required": true,
+    "policy_drift_tests_required": true,
+    "human_review_required_if": [
+      "major_version_change",
+      "breaking_change",
+      "ethical_invariant_change",
+      "guard_removal",
+      "decision_outcome_change"
+    ]
+  },
+  "official_sources": {
+    "main_repository": "https://github.com/wa-os-official/wa-os",
+    "protocol": "https://github.com/wa-os-official/wa-os/blob/main/wa-os.protocol.json",
+    "manifest": "https://github.com/wa-os-official/wa-os/blob/main/wa-os.manifest.json",
+    "runtime": "https://github.com/wa-os-official/wa-os/blob/main/wa_os_runtime.py"
+  },
+  "notes": [
+    "This file provides update and integrity metadata for WA-OS implementations.",
+    "It does not automatically activate updates.",
+    "Major governance changes require explicit human review.",
+    "If validation fails, implementations should continue using the last verified protocol version."
+  ]
+}
