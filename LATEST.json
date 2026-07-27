@@ -2,7 +2,7 @@
   "protocol": "WA-OS",
   "latest_version": "1.5.0-draft",
   "status": "experimental",
-  "published_at": "2026-07-27T00:00:00Z",
+  "published_at": "2026-07-27",
   "protocol_file": "wa-os.protocol.json",
   "manifest_file": "wa-os.manifest.json",
   "runtime_file": "wa_os_runtime.py",
@@ -34,9 +34,10 @@
   },
   "official_sources": {
     "main_repository": "https://github.com/wa-os-official/wa-os",
-    "protocol": "https://github.com/wa-os-official/wa-os/blob/main/wa-os.protocol.json",
-    "manifest": "https://github.com/wa-os-official/wa-os/blob/main/wa-os.manifest.json",
-    "runtime": "https://github.com/wa-os-official/wa-os/blob/main/wa_os_runtime.py"
+    "protocol": "https://raw.githubusercontent.com/wa-os-official/wa-os/main/wa-os.protocol.json",
+    "manifest": "https://raw.githubusercontent.com/wa-os-official/wa-os/main/wa-os.manifest.json",
+    "runtime": "https://raw.githubusercontent.com/wa-os-official/wa-os/main/wa_os_runtime.py",
+    "latest": "https://raw.githubusercontent.com/wa-os-official/wa-os/main/LATEST.json"
   },
   "notes": [
     "This file provides update and integrity metadata for WA-OS implementations.",
