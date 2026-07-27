@@ -78,6 +78,29 @@ WA-OS is rooted in the belief that true peace emerges not from centralized contr
 
 ## 🌿 Philosophy / 理念
 
+# WA-OS (Harmony-Oriented AI Governance Architecture)
+
+（プロジェクトの概要・要約）
+
+---
+
+## Philosophy / 理念
+
+### Why WA-OS Exists / WA-OSが存在する理由
+WA-OSは、科学や技術が進歩しても、人間の判断力、尊厳、歴史の記憶、道徳的責任までが退化してはならないという考えから生まれました...
+
+### Countering Structural Information Manipulation / 構造的情報操作への対抗
+WA-OSが対抗しようとしているのは、特定の国、企業、あるいは個別の政治勢力ではありません...
+
+### A Universal Framework Rooted in Human Wisdom / 人類共通の知恵に根ざした枠組み
+WA-OSの基盤にある「和（WA）」は、同質化や従属を意味しません...
+
+---
+
+## Architecture / システム構成・判定フロー
+（ここから判定フローやコードの解説へ続く）
+
+
 ### Concept: "和 (WA)" – The Spirit of Harmony
 
 **JP（日本語）**  
