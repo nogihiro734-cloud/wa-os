@@ -243,16 +243,16 @@ def validate_suite(suite: dict[str, Any]) -> list[dict[str, Any]]:
     return flattened_cases
 
 
-def normalize_text(text: str) -> str:
-    """Normalize Japanese and Latin text for simple direct phrase matching."""
+ def normalize_text(text: str) -> str:
+     """Normalize Japanese and Latin text for simple direct phrase matching."""
     normalized = text.casefold()
-    normalized = re.sub(r"\s+", "", normalized)
-    normalized = re.sub(
-        r"[ããï¼ï¼!?ã»ããããï¼ï¼()ï¼»ï¼½\[\]ãããã<>:ï¼;ï¼,.â¦ââ\-_/]",
-        "",
-        normalized,
-    )
-    return normalized
+     normalized = re.sub(r"\s+", "", normalized)
+　    normalized = re.sub(
+　　       r"[、。！？!?・「」『』（）()［］\[\]【】〈〉<>:：;；,.…—―\-_/]",
+         "",
+         normalized,
+     )
+     return normalized
 
 
 def direct_fail_signal_matches(
