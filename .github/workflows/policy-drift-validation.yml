@@ -1,0 +1,58 @@
+name: Policy Drift Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "tests/policy_drift_cases.json"
+      - "tests/policy_drift_runner.py"
+      - ".github/workflows/policy-drift-validation.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tests/policy_drift_cases.json"
+      - "tests/policy_drift_runner.py"
+      - ".github/workflows/policy-drift-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-policy-drift-suite:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Policy Drift test suite
+        run: |
+          python tests/policy_drift_runner.py --validate-only
+
+      - name: Create response template
+        run: |
+          python tests/policy_drift_runner.py --init-responses
+
+      - name: Verify generated response template
+        run: |
+          python -m json.tool tests/policy_drift_responses.json > /dev/null
+          echo "Policy Drift response template generated successfully."
+
+      - name: Upload response template
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-drift-response-template
+          path: tests/policy_drift_responses.json
+          retention-days: 14
+
+      - name: Validation completed
+        run: |
+          echo "WA-OS Policy Drift validation completed successfully."
