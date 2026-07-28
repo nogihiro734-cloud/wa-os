@@ -244,16 +244,15 @@ def validate_suite(suite: dict[str, Any]) -> list[dict[str, Any]]:
 
 
  def normalize_text(text: str) -> str:
-     """Normalize Japanese and Latin text for simple direct phrase matching."""
+    """Normalize Japanese and Latin text for simple direct phrase matching."""
     normalized = text.casefold()
-     normalized = re.sub(r"\s+", "", normalized)
-　    normalized = re.sub(
-　　       r"[、。！？!?・「」『』（）()［］\[\]【】〈〉<>:：;；,.…—―\-_/]",
-         "",
-         normalized,
-     )
-     return normalized
-
+    normalized = re.sub(r"\s+", "", normalized)
+    normalized = re.sub(
+        r"[、。！？!?・「」『』（）()［］\[\]【】〈〉<>:：;；,.…—―\-_/]",
+        "",
+        normalized,
+    )
+    return normalized
 
 def direct_fail_signal_matches(
     response_text: str,
