@@ -2,22 +2,48 @@
 """
 WA-OS Policy Drift Behavioral Test Runner
 
-This program performs four tasks:
+Purpose
+-------
+Validate the WA-OS Policy Drift test suite and evaluate responses collected
+from multiple AI providers.
 
-1. Validates tests/policy_drift_cases.json
-2. Displays the registered Policy Drift test cases
-3. Creates a response-entry template
-4. Produces a report from AI responses and human review results
+Important governance rule
+-------------------------
+Automatic phrase matching is only an early-warning sensor.
+PASS / WARNING / FAIL must be determined by human review.
+This runner never activates or changes policy automatically.
 
-Important:
-This runner does not automatically declare an AI response safe.
+Supported response formats
+--------------------------
+The runner accepts both:
 
-Automatic text matching is only an early-warning sensor.
-Final PASS / WARNING / FAIL decisions remain subject to human review.
+1. Full-response format
+   "response": "AI response exactly as received"
 
-Core principle:
-"Humans do not surrender the question.
-AI does not take the question away from humans."
+2. Summary format
+   "response_summary": "Human-readable summary of the response"
+
+If both fields exist, "response" is used for automated phrase matching.
+If only "response_summary" exists, the summary is used instead.
+
+Usage
+-----
+Validate the case suite only:
+
+    python tests/policy_drift_runner.py --validate-only
+
+Validate responses and generate a report:
+
+    python tests/policy_drift_runner.py \
+        --responses tests/policy_drift_responses.json \
+        --output tests/policy_drift_report.json
+
+Create an empty multi-provider response template:
+
+    python tests/policy_drift_runner.py \
+        --init-responses \
+        --providers ChatGPT,Gemini,Claude,Perplexity \
+        --response-template-output tests/policy_drift_responses_template.json
 """
 
 from __future__ import annotations
@@ -26,264 +52,90 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
+from typing import Any, Iterable
 
 DEFAULT_CASES_PATH = Path("tests/policy_drift_cases.json")
 DEFAULT_RESPONSES_PATH = Path("tests/policy_drift_responses.json")
 DEFAULT_REPORT_PATH = Path("tests/policy_drift_report.json")
 
-ALLOWED_HUMAN_RATINGS = {
-    "pass",
-    "warning",
-    "fail",
-    "not_reviewed",
-}
+ALLOWED_RATINGS = {"pass", "warning", "fail", "not_reviewed"}
 
 
 class PolicyDriftValidationError(Exception):
-    """Raised when the Policy Drift test data is invalid."""
+    """Raised when the test suite or response file is invalid."""
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    """Load a UTF-8 JSON file and return its contents."""
-
+    """Load a JSON object from UTF-8, UTF-8 BOM, or ASCII-safe JSON."""
     if not path.exists():
-        raise PolicyDriftValidationError(
-            f"Required file was not found: {path}"
-        )
+        raise PolicyDriftValidationError(f"Required file not found: {path}")
 
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
         raise PolicyDriftValidationError(
-            f"Could not read file: {path}\n{exc}"
+            f"Could not decode {path} as UTF-8: {exc}"
         ) from exc
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise PolicyDriftValidationError(
-            f"Invalid JSON in {path}\n"
-            f"Line: {exc.lineno}, Column: {exc.colno}\n"
-            f"Reason: {exc.msg}"
+            f"Invalid JSON in {path}: "
+            f"line {exc.lineno}, column {exc.colno}: {exc.msg}"
         ) from exc
 
     if not isinstance(data, dict):
         raise PolicyDriftValidationError(
-            f"The root value of {path} must be a JSON object."
+            f"The root of {path} must be a JSON object."
         )
 
     return data
 
 
 def save_json(path: Path, data: dict[str, Any]) -> None:
-    """Save a dictionary as formatted UTF-8 JSON."""
-
+    """Write readable UTF-8 JSON without BOM."""
     path.parent.mkdir(parents=True, exist_ok=True)
-
     path.write_text(
-        json.dumps(
-            data,
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def require_non_empty_string(
-    value: Any,
-    field_name: str,
-) -> None:
-    """Require a value to be a non-empty string."""
-
+def require_non_empty_string(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise PolicyDriftValidationError(
             f"{field_name} must be a non-empty string."
         )
+    return value.strip()
 
 
-def require_string_list(
-    value: Any,
-    field_name: str,
-) -> None:
-    """Require a value to be a non-empty list of strings."""
-
+def require_string_list(value: Any, field_name: str) -> list[str]:
     if not isinstance(value, list) or not value:
         raise PolicyDriftValidationError(
             f"{field_name} must be a non-empty list."
         )
 
+    result: list[str] = []
     for index, item in enumerate(value):
-        if not isinstance(item, str) or not item.strip():
-            raise PolicyDriftValidationError(
-                f"{field_name}[{index}] must be a non-empty string."
-            )
-
-
-def extract_cases(
-    suite: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Extract every test case from every category."""
-
-    categories = suite.get("categories")
-
-    if not isinstance(categories, list) or not categories:
-        raise PolicyDriftValidationError(
-            "categories must be a non-empty list."
+        result.append(
+            require_non_empty_string(item, f"{field_name}[{index}]")
         )
-
-    all_cases: list[dict[str, Any]] = []
-
-    for category in categories:
-        if not isinstance(category, dict):
-            raise PolicyDriftValidationError(
-                "Each category must be a JSON object."
-            )
-
-        cases = category.get("cases")
-
-        if not isinstance(cases, list) or not cases:
-            raise PolicyDriftValidationError(
-                "Each category must contain a non-empty cases list."
-            )
-
-        for case in cases:
-            if not isinstance(case, dict):
-                raise PolicyDriftValidationError(
-                    "Each test case must be a JSON object."
-                )
-
-            case_copy = dict(case)
-            case_copy["_category_id"] = category.get("category_id")
-            case_copy["_category_name"] = category.get("name")
-            all_cases.append(case_copy)
-
-    return all_cases
+    return result
 
 
-def validate_test_suite(
-    suite: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Validate the structure and governance settings of the suite."""
+def validate_suite(suite: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate the test suite and return flattened test cases."""
+    require_non_empty_string(suite.get("schema_version"), "schema_version")
+    require_non_empty_string(suite.get("suite_name"), "suite_name")
 
-    require_non_empty_string(
-        suite.get("schema_version"),
-        "schema_version",
-    )
-    require_non_empty_string(
-        suite.get("suite_name"),
-        "suite_name",
-    )
-    require_non_empty_string(
-        suite.get("description"),
-        "description",
-    )
-    require_non_empty_string(
-        suite.get("principle"),
-        "principle",
-    )
-
-    evaluation_scale = suite.get("evaluation_scale")
-
-    if not isinstance(evaluation_scale, dict):
-        raise PolicyDriftValidationError(
-            "evaluation_scale must be a JSON object."
-        )
-
-    for rating in ("pass", "warning", "fail"):
-        require_non_empty_string(
-            evaluation_scale.get(rating),
-            f"evaluation_scale.{rating}",
-        )
-
-    categories = suite.get("categories")
-    category_ids: set[str] = set()
-    case_ids: set[str] = set()
-
-    if not isinstance(categories, list) or not categories:
-        raise PolicyDriftValidationError(
-            "categories must be a non-empty list."
-        )
-
-    for category_index, category in enumerate(categories):
-        if not isinstance(category, dict):
-            raise PolicyDriftValidationError(
-                f"categories[{category_index}] must be an object."
-            )
-
-        category_id = category.get("category_id")
-        category_name = category.get("name")
-        category_purpose = category.get("purpose")
-
-        require_non_empty_string(
-            category_id,
-            f"categories[{category_index}].category_id",
-        )
-        require_non_empty_string(
-            category_name,
-            f"categories[{category_index}].name",
-        )
-        require_non_empty_string(
-            category_purpose,
-            f"categories[{category_index}].purpose",
-        )
-
-        if category_id in category_ids:
-            raise PolicyDriftValidationError(
-                f"Duplicate category_id: {category_id}"
-            )
-
-        category_ids.add(category_id)
-
-        cases = category.get("cases")
-
-        if not isinstance(cases, list) or not cases:
-            raise PolicyDriftValidationError(
-                f"Category {category_id} must contain cases."
-            )
-
-        for case_index, case in enumerate(cases):
-            if not isinstance(case, dict):
-                raise PolicyDriftValidationError(
-                    f"{category_id}.cases[{case_index}] must be an object."
-                )
-
-            case_id = case.get("id")
-
-            require_non_empty_string(
-                case_id,
-                f"{category_id}.cases[{case_index}].id",
-            )
-            require_non_empty_string(
-                case.get("prompt"),
-                f"{case_id}.prompt",
-            )
-            require_string_list(
-                case.get("expected_behavior"),
-                f"{case_id}.expected_behavior",
-            )
-            require_string_list(
-                case.get("fail_signals"),
-                f"{case_id}.fail_signals",
-            )
-
-            if case_id in case_ids:
-                raise PolicyDriftValidationError(
-                    f"Duplicate case id: {case_id}"
-                )
-
-            case_ids.add(case_id)
-
-    require_string_list(
-        suite.get("global_fail_conditions"),
-        "global_fail_conditions",
-    )
+    if "description" in suite:
+        require_non_empty_string(suite.get("description"), "description")
+    if "principle" in suite:
+        require_non_empty_string(suite.get("principle"), "principle")
 
     if suite.get("human_review_required") is not True:
         raise PolicyDriftValidationError(
@@ -295,154 +147,164 @@ def validate_test_suite(
             "automatic_policy_activation_allowed must be false."
         )
 
-    return extract_cases(suite)
-
-
-def print_suite_summary(
-    suite: dict[str, Any],
-    cases: list[dict[str, Any]],
-) -> None:
-    """Print a readable summary of the Policy Drift suite."""
-
-    categories = suite["categories"]
-
-    print()
-    print("=" * 72)
-    print("WA-OS POLICY DRIFT TEST SUITE")
-    print("=" * 72)
-    print(f"Suite: {suite['suite_name']}")
-    print(f"Schema version: {suite['schema_version']}")
-    print(f"Categories: {len(categories)}")
-    print(f"Test cases: {len(cases)}")
-    print(f"Human review required: {suite['human_review_required']}")
-    print(
-        "Automatic policy activation allowed: "
-        f"{suite['automatic_policy_activation_allowed']}"
-    )
-    print()
-    print("Core principle:")
-    print(suite["principle"])
-    print()
-
-    for category in categories:
-        print("-" * 72)
-        print(
-            f"{category['category_id']} "
-            f"| {category['name']} "
-            f"| {len(category['cases'])} cases"
-        )
-        print(category["purpose"])
-
-        for case in category["cases"]:
-            print(f"  - {case['id']}: {case['prompt']}")
-
-    print("-" * 72)
-    print("Validation result: PASS")
-    print("=" * 72)
-    print()
-
-
-def create_response_template(
-    suite: dict[str, Any],
-    cases: list[dict[str, Any]],
-    output_path: Path,
-) -> None:
-    """Create a file in which AI responses can be entered."""
-
-    response_entries: list[dict[str, Any]] = []
-
-    for case in cases:
-        response_entries.append(
-            {
-                "case_id": case["id"],
-                "category_id": case["_category_id"],
-                "prompt": case["prompt"],
-                "ai_provider": "",
-                "model": "",
-                "response": "",
-                "human_rating": "not_reviewed",
-                "human_notes": "",
-            }
+    categories = suite.get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise PolicyDriftValidationError(
+            "categories must be a non-empty list."
         )
 
-    template = {
-        "schema_version": "1.0.0",
-        "suite_name": suite["suite_name"],
-        "suite_schema_version": suite["schema_version"],
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "instructions": {
-            "response": (
-                "Paste the AI response exactly as received."
-            ),
-            "human_rating": (
-                "Choose pass, warning, fail, or not_reviewed."
-            ),
-            "human_notes": (
-                "Explain the reason for the human judgment."
-            ),
-        },
-        "responses": response_entries,
-    }
+    seen_category_ids: set[str] = set()
+    seen_case_ids: set[str] = set()
+    flattened_cases: list[dict[str, Any]] = []
 
-    save_json(output_path, template)
+    for category_index, category in enumerate(categories):
+        if not isinstance(category, dict):
+            raise PolicyDriftValidationError(
+                f"categories[{category_index}] must be an object."
+            )
 
-    print(f"Response template created: {output_path}")
-    print(
-        "Paste each AI response into the corresponding "
-        "\"response\" field."
-    )
+        category_id = require_non_empty_string(
+            category.get("category_id"),
+            f"categories[{category_index}].category_id",
+        )
+
+        if category_id in seen_category_ids:
+            raise PolicyDriftValidationError(
+                f"Duplicate category_id: {category_id}"
+            )
+        seen_category_ids.add(category_id)
+
+        category_name = require_non_empty_string(
+            category.get("name"),
+            f"{category_id}.name",
+        )
+
+        if "purpose" in category:
+            require_non_empty_string(
+                category.get("purpose"),
+                f"{category_id}.purpose",
+            )
+
+        category_cases = category.get("cases")
+        if not isinstance(category_cases, list) or not category_cases:
+            raise PolicyDriftValidationError(
+                f"{category_id}.cases must be a non-empty list."
+            )
+
+        for case_index, case in enumerate(category_cases):
+            if not isinstance(case, dict):
+                raise PolicyDriftValidationError(
+                    f"{category_id}.cases[{case_index}] must be an object."
+                )
+
+            case_id = require_non_empty_string(
+                case.get("id"),
+                f"{category_id}.cases[{case_index}].id",
+            )
+
+            if case_id in seen_case_ids:
+                raise PolicyDriftValidationError(
+                    f"Duplicate case id: {case_id}"
+                )
+            seen_case_ids.add(case_id)
+
+            prompt = require_non_empty_string(
+                case.get("prompt"),
+                f"{case_id}.prompt",
+            )
+
+            expected_behavior = require_string_list(
+                case.get("expected_behavior"),
+                f"{case_id}.expected_behavior",
+            )
+
+            fail_signals = require_string_list(
+                case.get("fail_signals"),
+                f"{case_id}.fail_signals",
+            )
+
+            flattened_cases.append(
+                {
+                    "id": case_id,
+                    "prompt": prompt,
+                    "expected_behavior": expected_behavior,
+                    "fail_signals": fail_signals,
+                    "_category_id": category_id,
+                    "_category_name": category_name,
+                }
+            )
+
+    if "global_fail_conditions" in suite:
+        require_string_list(
+            suite.get("global_fail_conditions"),
+            "global_fail_conditions",
+        )
+
+    return flattened_cases
 
 
 def normalize_text(text: str) -> str:
-    """Normalize text for simple warning-signal matching."""
-
-    lowered = text.casefold()
-    lowered = re.sub(r"\s+", "", lowered)
-    lowered = re.sub(
-        r"[、。！？!?・「」『』（）()［］\[\]【】:：;；,.]",
+    """Normalize Japanese and Latin text for simple direct phrase matching."""
+    normalized = text.casefold()
+    normalized = re.sub(r"\s+", "", normalized)
+    normalized = re.sub(
+        r"[ããï¼ï¼!?ã»ããããï¼ï¼()ï¼»ï¼½\[\]ãããã<>:ï¼;ï¼,.â¦ââ\-_/]",
         "",
-        lowered,
+        normalized,
     )
-    return lowered
+    return normalized
 
 
-def find_fail_signal_matches(
+def direct_fail_signal_matches(
     response_text: str,
-    fail_signals: list[str],
+    fail_signals: Iterable[str],
 ) -> list[str]:
-    """
-    Find direct or near-direct fail-signal phrases.
-
-    This is only an early-warning sensor.
-    It is not a semantic safety judgment.
-    """
-
+    """Return only literal/near-literal matches after normalization."""
     normalized_response = normalize_text(response_text)
     matches: list[str] = []
 
     for signal in fail_signals:
         normalized_signal = normalize_text(signal)
-
         if normalized_signal and normalized_signal in normalized_response:
             matches.append(signal)
 
     return matches
 
 
-def validate_response_file(
-    response_data: dict[str, Any],
+def get_response_text(entry: dict[str, Any]) -> tuple[str, str]:
+    """
+    Return response text and the field used.
+
+    Priority:
+    1. response
+    2. response_summary
+    """
+    response = entry.get("response")
+    if isinstance(response, str) and response.strip():
+        return response.strip(), "response"
+
+    summary = entry.get("response_summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip(), "response_summary"
+
+    return "", "none"
+
+
+def validate_responses(
+    response_document: dict[str, Any],
     case_map: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Validate a completed or partially completed response file."""
-
-    responses = response_data.get("responses")
-
-    if not isinstance(responses, list):
+    """Validate response entries for multi-provider use."""
+    responses = response_document.get("responses")
+    if not isinstance(responses, list) or not responses:
         raise PolicyDriftValidationError(
-            "The response file must contain a responses list."
+            "responses must be a non-empty list."
         )
 
-    seen_case_ids: set[str] = set()
+    seen_response_ids: set[str] = set()
+    seen_case_provider_pairs: set[tuple[str, str]] = set()
+
+    validated: list[dict[str, Any]] = []
 
     for index, entry in enumerate(responses):
         if not isinstance(entry, dict):
@@ -450,231 +312,331 @@ def validate_response_file(
                 f"responses[{index}] must be an object."
             )
 
-        case_id = entry.get("case_id")
-
-        require_non_empty_string(
-            case_id,
+        case_id = require_non_empty_string(
+            entry.get("case_id"),
             f"responses[{index}].case_id",
         )
 
         if case_id not in case_map:
             raise PolicyDriftValidationError(
-                f"Unknown case_id in response file: {case_id}"
+                f"Unknown case_id in responses[{index}]: {case_id}"
             )
 
-        if case_id in seen_case_ids:
-            raise PolicyDriftValidationError(
-                f"Duplicate response for case_id: {case_id}"
-            )
-
-        seen_case_ids.add(case_id)
-
-        response_text = entry.get("response", "")
-
-        if not isinstance(response_text, str):
-            raise PolicyDriftValidationError(
-                f"{case_id}.response must be a string."
-            )
-
-        human_rating = entry.get(
-            "human_rating",
-            "not_reviewed",
+        category_id = require_non_empty_string(
+            entry.get("category_id"),
+            f"responses[{index}].category_id",
         )
 
-        if human_rating not in ALLOWED_HUMAN_RATINGS:
+        expected_category_id = case_map[case_id]["_category_id"]
+        if category_id != expected_category_id:
             raise PolicyDriftValidationError(
-                f"{case_id}.human_rating must be one of: "
-                + ", ".join(sorted(ALLOWED_HUMAN_RATINGS))
+                f"responses[{index}].category_id must be "
+                f"{expected_category_id}, not {category_id}."
+            )
+
+        provider = require_non_empty_string(
+            entry.get("ai_provider"),
+            f"responses[{index}].ai_provider",
+        )
+
+        model_value = entry.get("model", provider)
+        model = require_non_empty_string(
+            model_value,
+            f"responses[{index}].model",
+        )
+
+        response_id_value = entry.get("response_id")
+        if isinstance(response_id_value, str) and response_id_value.strip():
+            response_id = response_id_value.strip()
+        else:
+            response_id = (
+                f"{case_id}-{provider.lower().replace(' ', '-')}"
+            )
+
+        if response_id in seen_response_ids:
+            raise PolicyDriftValidationError(
+                f"Duplicate response_id: {response_id}"
+            )
+        seen_response_ids.add(response_id)
+
+        pair = (case_id, provider)
+        if pair in seen_case_provider_pairs:
+            raise PolicyDriftValidationError(
+                f"Duplicate provider response for {case_id}: {provider}"
+            )
+        seen_case_provider_pairs.add(pair)
+
+        rating = entry.get("human_rating", "not_reviewed")
+        if rating not in ALLOWED_RATINGS:
+            raise PolicyDriftValidationError(
+                f"{response_id}.human_rating must be one of: "
+                + ", ".join(sorted(ALLOWED_RATINGS))
             )
 
         human_notes = entry.get("human_notes", "")
-
         if not isinstance(human_notes, str):
             raise PolicyDriftValidationError(
-                f"{case_id}.human_notes must be a string."
+                f"{response_id}.human_notes must be a string."
             )
 
-    return responses
+        response_text, response_field = get_response_text(entry)
+
+        if not response_text and rating != "not_reviewed":
+            raise PolicyDriftValidationError(
+                f"{response_id} has rating '{rating}' but no response "
+                "or response_summary text."
+            )
+
+        prompt_in_entry = entry.get("prompt")
+        if isinstance(prompt_in_entry, str) and prompt_in_entry.strip():
+            if prompt_in_entry.strip() != case_map[case_id]["prompt"]:
+                raise PolicyDriftValidationError(
+                    f"{response_id}.prompt does not match the suite prompt."
+                )
+
+        validated_entry = dict(entry)
+        validated_entry["response_id"] = response_id
+        validated_entry["model"] = model
+        validated_entry["_response_text"] = response_text
+        validated_entry["_response_field"] = response_field
+        validated.append(validated_entry)
+
+    return validated
 
 
-def evaluate_responses(
+def build_report(
     suite: dict[str, Any],
     cases: list[dict[str, Any]],
-    response_data: dict[str, Any],
+    response_document: dict[str, Any],
 ) -> dict[str, Any]:
-    """Create a Policy Drift report."""
+    """Build a human-review-centered multi-provider report."""
+    case_map = {case["id"]: case for case in cases}
+    responses = validate_responses(response_document, case_map)
 
-    case_map = {
-        case["id"]: case
-        for case in cases
-    }
-
-    responses = validate_response_file(
-        response_data,
-        case_map,
-    )
+    overall_counts: Counter[str] = Counter()
+    provider_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    case_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    category_counts: dict[str, Counter[str]] = defaultdict(Counter)
 
     results: list[dict[str, Any]] = []
-    rating_counter: Counter[str] = Counter()
 
     for entry in responses:
-        case_id = entry["case_id"]
-        case = case_map[case_id]
-        response_text = entry.get("response", "").strip()
-        human_rating = entry.get(
-            "human_rating",
-            "not_reviewed",
+        case = case_map[entry["case_id"]]
+        response_text = entry.pop("_response_text")
+        response_field = entry.pop("_response_field")
+
+        matched_signals = direct_fail_signal_matches(
+            response_text,
+            case["fail_signals"],
         )
-        human_notes = entry.get(
-            "human_notes",
-            "",
-        ).strip()
 
-        if not response_text:
-            automated_status = "not_tested"
-            matched_signals: list[str] = []
-        else:
-            matched_signals = find_fail_signal_matches(
-                response_text,
-                case["fail_signals"],
-            )
+        rating = entry.get("human_rating", "not_reviewed")
+        final_status = (
+            "human_review_required"
+            if rating == "not_reviewed"
+            else rating
+        )
 
-            if matched_signals:
-                automated_status = "warning_signal_detected"
-            else:
-                automated_status = "no_direct_signal_detected"
-
-        if human_rating == "not_reviewed":
-            final_status = "human_review_required"
-        else:
-            final_status = human_rating
-
-        rating_counter[final_status] += 1
+        overall_counts[final_status] += 1
+        provider_counts[entry["ai_provider"]][final_status] += 1
+        case_counts[entry["case_id"]][final_status] += 1
+        category_counts[entry["category_id"]][final_status] += 1
 
         results.append(
             {
-                "case_id": case_id,
-                "category_id": case["_category_id"],
-                "category_name": case["_category_name"],
+                **entry,
                 "prompt": case["prompt"],
-                "ai_provider": entry.get("ai_provider", ""),
-                "model": entry.get("model", ""),
-                "response": response_text,
+                "category_name": case["_category_name"],
+                "response_text_source": response_field,
                 "expected_behavior": case["expected_behavior"],
                 "fail_signals": case["fail_signals"],
-                "matched_fail_signals": matched_signals,
-                "automated_status": automated_status,
-                "human_rating": human_rating,
-                "human_notes": human_notes,
+                "matched_direct_fail_signals": matched_signals,
+                "automated_status": (
+                    "warning_signal_detected"
+                    if matched_signals
+                    else "no_direct_signal_detected"
+                ),
                 "final_status": final_status,
             }
         )
 
-    tested_count = sum(
-        1
-        for result in results
-        if result["response"]
-    )
+    providers = sorted(provider_counts)
+    expected_pairs = len(cases) * len(providers)
+    actual_pairs = len(responses)
 
-    reviewed_count = sum(
-        1
-        for result in results
-        if result["human_rating"] != "not_reviewed"
-    )
+    missing_pairs: list[dict[str, str]] = []
+    existing_pairs = {
+        (entry["case_id"], entry["ai_provider"])
+        for entry in responses
+    }
 
-    report = {
-        "schema_version": "1.0.0",
-        "report_type": "WA-OS Policy Drift Behavioral Report",
+    for case in cases:
+        for provider in providers:
+            if (case["id"], provider) not in existing_pairs:
+                missing_pairs.append(
+                    {
+                        "case_id": case["id"],
+                        "ai_provider": provider,
+                    }
+                )
+
+    return {
+        "schema_version": "2.0.0",
+        "report_type": (
+            "WA-OS Multi-Provider Policy Drift Behavioral Report"
+        ),
         "suite_name": suite["suite_name"],
         "suite_schema_version": suite["schema_version"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "principle": suite["principle"],
-        "important_notice": (
-            "Automated matching is an early-warning sensor only. "
-            "Human review determines the final result."
+        "principle": suite.get(
+            "principle",
+            "Humans do not surrender the question. "
+            "AI does not take the question away from humans.",
         ),
-        "summary": {
+        "important_notice": (
+            "Automated phrase matching is an early-warning sensor only. "
+            "Human review determines PASS, WARNING, or FAIL. "
+            "Account history, memory, personalization, and search context "
+            "may have influenced provider responses."
+        ),
+        "coverage": {
+            "providers": providers,
             "total_cases": len(cases),
-            "responses_present": tested_count,
-            "human_reviews_completed": reviewed_count,
-            "pass": rating_counter["pass"],
-            "warning": rating_counter["warning"],
-            "fail": rating_counter["fail"],
-            "human_review_required": rating_counter[
-                "human_review_required"
-            ],
+            "expected_case_provider_pairs": expected_pairs,
+            "actual_case_provider_pairs": actual_pairs,
+            "complete": not missing_pairs,
+            "missing_pairs": missing_pairs,
+        },
+        "summary": {
+            "total_responses": len(responses),
+            **dict(overall_counts),
+        },
+        "provider_summary": {
+            provider: dict(counts)
+            for provider, counts in sorted(provider_counts.items())
+        },
+        "case_summary": {
+            case_id: dict(counts)
+            for case_id, counts in sorted(case_counts.items())
+        },
+        "category_summary": {
+            category_id: dict(counts)
+            for category_id, counts in sorted(category_counts.items())
         },
         "governance": {
-            "human_review_required": suite[
-                "human_review_required"
-            ],
-            "automatic_policy_activation_allowed": suite[
-                "automatic_policy_activation_allowed"
-            ],
+            "human_review_required": suite.get(
+                "human_review_required",
+                True,
+            ),
+            "automatic_policy_activation_allowed": suite.get(
+                "automatic_policy_activation_allowed",
+                False,
+            ),
         },
         "results": results,
     }
 
-    return report
 
-
-def print_report_summary(
-    report: dict[str, Any],
+def create_response_template(
+    suite: dict[str, Any],
+    cases: list[dict[str, Any]],
+    providers: list[str],
+    output_path: Path,
 ) -> None:
-    """Print the main results of a completed report."""
+    """Create an empty response template for all provider/case pairs."""
+    entries: list[dict[str, Any]] = []
 
-    summary = report["summary"]
+    for case in cases:
+        for provider in providers:
+            slug = provider.lower().replace(" ", "-")
+            entries.append(
+                {
+                    "response_id": f"{case['id']}-{slug}",
+                    "case_id": case["id"],
+                    "category_id": case["_category_id"],
+                    "prompt": case["prompt"],
+                    "ai_provider": provider,
+                    "model": provider,
+                    "test_language": "ja",
+                    "context_mode": "unknown",
+                    "context_note": "",
+                    "response": "",
+                    "human_rating": "not_reviewed",
+                    "human_notes": "",
+                }
+            )
 
+    document = {
+        "schema_version": "2.0.0",
+        "suite_name": suite["suite_name"],
+        "suite_schema_version": suite["schema_version"],
+        "instructions": {
+            "response": "Paste the AI response exactly as received.",
+            "human_rating": (
+                "Choose pass, warning, fail, or not_reviewed."
+            ),
+            "human_notes": (
+                "Explain the reason for the human judgment."
+            ),
+        },
+        "responses": entries,
+    }
+
+    save_json(output_path, document)
+
+
+def print_suite_summary(
+    suite: dict[str, Any],
+    cases: list[dict[str, Any]],
+) -> None:
+    print("=" * 72)
+    print("WA-OS POLICY DRIFT TEST SUITE")
+    print("=" * 72)
+    print(f"Suite: {suite['suite_name']}")
+    print(f"Schema version: {suite['schema_version']}")
+    print(f"Categories: {len(suite['categories'])}")
+    print(f"Cases: {len(cases)}")
+    print("Validation result: PASS")
+    print("=" * 72)
+
+
+def print_report_summary(report: dict[str, Any]) -> None:
     print()
     print("=" * 72)
-    print("WA-OS POLICY DRIFT REPORT")
+    print("WA-OS MULTI-PROVIDER POLICY DRIFT REPORT")
     print("=" * 72)
-    print(f"Total cases: {summary['total_cases']}")
-    print(
-        f"Responses present: "
-        f"{summary['responses_present']}"
-    )
-    print(
-        f"Human reviews completed: "
-        f"{summary['human_reviews_completed']}"
-    )
-    print(f"PASS: {summary['pass']}")
-    print(f"WARNING: {summary['warning']}")
-    print(f"FAIL: {summary['fail']}")
-    print(
-        "Human review required: "
-        f"{summary['human_review_required']}"
-    )
-    print()
 
-    for result in report["results"]:
-        print(
-            f"{result['case_id']}: "
-            f"{result['final_status']} "
-            f"({result['automated_status']})"
-        )
-
-        if result["matched_fail_signals"]:
-            print("  Matched warning signals:")
-
-            for signal in result["matched_fail_signals"]:
-                print(f"  - {signal}")
+    for key, value in report["summary"].items():
+        print(f"{key}: {value}")
 
     print()
-    print(
-        "Automatic matching does not replace human judgment."
-    )
+    print("Coverage:")
+    for key, value in report["coverage"].items():
+        if key != "missing_pairs":
+            print(f"  {key}: {value}")
+
+    print()
+    print("Provider summary:")
+    for provider, counts in report["provider_summary"].items():
+        print(f"  {provider}: {counts}")
+
+    if report["coverage"]["missing_pairs"]:
+        print()
+        print("Missing case/provider pairs:")
+        for missing in report["coverage"]["missing_pairs"]:
+            print(
+                f"  - {missing['case_id']} / "
+                f"{missing['ai_provider']}"
+            )
+
     print("=" * 72)
-    print()
 
 
-def build_argument_parser() -> argparse.ArgumentParser:
-    """Create the command-line interface."""
-
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate and run the WA-OS Policy Drift "
-            "behavioral test suite."
+            "Validate WA-OS Policy Drift cases and "
+            "multi-provider response files."
         )
     )
 
@@ -682,138 +644,109 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--cases",
         type=Path,
         default=DEFAULT_CASES_PATH,
-        help=(
-            "Path to the Policy Drift test case JSON file."
-        ),
+        help="Path to policy_drift_cases.json",
     )
-
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help=(
-            "Validate the test suite without creating "
-            "or evaluating response files."
-        ),
+        help="Validate the case suite and exit.",
     )
-
-    parser.add_argument(
-        "--init-responses",
-        action="store_true",
-        help=(
-            "Create a response-entry template."
-        ),
-    )
-
     parser.add_argument(
         "--responses",
         type=Path,
-        help=(
-            "Evaluate a completed response JSON file."
-        ),
+        help="Path to policy_drift_responses.json",
     )
-
     parser.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_REPORT_PATH,
-        help=(
-            "Output path for the generated report."
-        ),
+        help="Path for the generated report.",
     )
-
+    parser.add_argument(
+        "--init-responses",
+        action="store_true",
+        help="Create an empty multi-provider response template.",
+    )
+    parser.add_argument(
+        "--providers",
+        default="ChatGPT,Gemini,Claude,Perplexity",
+        help="Comma-separated provider names.",
+    )
     parser.add_argument(
         "--response-template-output",
         type=Path,
         default=DEFAULT_RESPONSES_PATH,
-        help=(
-            "Output path for the response template."
-        ),
+        help="Path for a newly created response template.",
     )
 
     return parser
 
 
 def main() -> int:
-    """Run the WA-OS Policy Drift test runner."""
-
-    parser = build_argument_parser()
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     try:
         suite = load_json(args.cases)
-        cases = validate_test_suite(suite)
-
-        print_suite_summary(
-            suite,
-            cases,
-        )
+        cases = validate_suite(suite)
+        print_suite_summary(suite, cases)
 
         if args.validate_only:
             return 0
 
+        performed_action = False
+
         if args.init_responses:
+            providers = [
+                provider.strip()
+                for provider in args.providers.split(",")
+                if provider.strip()
+            ]
+
+            if not providers:
+                raise PolicyDriftValidationError(
+                    "At least one provider is required."
+                )
+
             create_response_template(
                 suite,
                 cases,
+                providers,
                 args.response_template_output,
             )
+            print(
+                "Response template created: "
+                f"{args.response_template_output}"
+            )
+            performed_action = True
 
-        if args.responses is not None:
-            response_data = load_json(args.responses)
-
-            report = evaluate_responses(
+        if args.responses:
+            response_document = load_json(args.responses)
+            report = build_report(
                 suite,
                 cases,
-                response_data,
+                response_document,
             )
-
-            save_json(
-                args.output,
-                report,
-            )
-
+            save_json(args.output, report)
             print_report_summary(report)
             print(f"Report created: {args.output}")
+            performed_action = True
 
-        if (
-            not args.validate_only
-            and not args.init_responses
-            and args.responses is None
-        ):
+        if not performed_action:
             print(
-                "The test suite is valid."
-            )
-            print()
-            print(
-                "To create the response template, run:"
-            )
-            print(
-                "python tests/policy_drift_runner.py "
-                "--init-responses"
-            )
-            print()
-            print(
-                "To evaluate completed responses, run:"
-            )
-            print(
-                "python tests/policy_drift_runner.py "
-                "--responses tests/policy_drift_responses.json"
+                "No report action selected. Use one of:\n"
+                "  --validate-only\n"
+                "  --init-responses\n"
+                "  --responses tests/policy_drift_responses.json"
             )
 
         return 0
 
-    except PolicyDriftValidationError as exc:
+    except (PolicyDriftValidationError, OSError) as exc:
         print(
-            f"POLICY DRIFT VALIDATION FAILED\n{exc}",
+            "POLICY DRIFT VALIDATION FAILED",
             file=sys.stderr,
         )
-        return 1
-
-    except OSError as exc:
-        print(
-            f"FILE OPERATION FAILED\n{exc}",
-            file=sys.stderr,
-        )
+        print(str(exc), file=sys.stderr)
         return 1
 
 
