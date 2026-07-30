@@ -23,7 +23,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
-
+from wa_os_role_router import (
+    RouteDecision,
+    classify_role,
+    response_directive,
+)
 
 class DecisionAction(str, Enum):
     PASS = "PASS"
