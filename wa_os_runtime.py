@@ -893,17 +893,23 @@ AI systems must not remove the user's opportunity or responsibility to think.
             for guard in self.guards
         ]
 
-    def process(
+        def process(
         self,
         user_prompt: str,
         proposed_response: str,
     ) -> Dict[str, Any]:
+        # Step 1: Select the appropriate AI role before guard evaluation.
+        role_decision = classify_role(user_prompt)
+        role_directive = response_directive(role_decision)
+
+        # Step 2: Evaluate the proposed response through the five core guards.
         guard_results = self.evaluate_guards(
             user_prompt=user_prompt,
             proposed_response=proposed_response,
         )
         decision = self.decision_engine.route(guard_results)
 
+        # Step 3: Apply the routed WA-OS outcome.
         if decision.action == DecisionAction.REJECT:
             final_response = (
                 "【WA-OS Protocol】重大な安全上の懸念が検出されたため、"
@@ -929,15 +935,30 @@ AI systems must not remove the user's opportunity or responsibility to think.
             final_response = proposed_response
             status = "passed"
 
+        # Step 4: Build an audit record including the selected role
+        # and the captured task contract.
         audit_record = self._build_audit_record(
             status=status,
             decision=decision,
             guard_results=guard_results,
         )
 
+        audit_record["role_selection"] = {
+            "role": role_decision.role,
+            "intervention_level": role_decision.intervention_level,
+            "reasons": list(role_decision.reasons),
+            "directive": role_directive,
+            "task_contract": asdict(role_decision.contract),
+        }
+
         return {
             "status": status,
             "action": decision.action.value,
+            "selected_role": role_decision.role,
+            "intervention_level": role_decision.intervention_level,
+            "role_reasons": list(role_decision.reasons),
+            "role_directive": role_directive,
+            "task_contract": asdict(role_decision.contract),
             "final_response": final_response,
             "guard_results": [
                 result.to_dict()
