@@ -893,7 +893,7 @@ AI systems must not remove the user's opportunity or responsibility to think.
             for guard in self.guards
         ]
 
-        def process(
+　　def process(
         self,
         user_prompt: str,
         proposed_response: str,
