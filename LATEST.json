@@ -15,7 +15,7 @@
     "algorithm": "sha256",
     "protocol_sha256": "404bc1a5542199528e1476b567accb40ce85a22be046dd144af126e29bab3276",
     "manifest_sha256": "b7b4f1c92f97b52c893eea0055336903903ab19fe102457c49946f0d183166b5",
-    "runtime_sha256": "e44df96c2679306cafda9052263ba6bf89f8a4d2bce3906def3fa52fe45aec4c"
+    "runtime_sha256": "7c35560fbe75e61f21c083b560245ebc0fee4ad701eef585224ebc75ab977c82"
   },
   "compatibility": {
     "minimum_runtime_version": "1.5.0-draft",
