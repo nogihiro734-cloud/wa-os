@@ -57,6 +57,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from wa_os_policy_drift import evaluate_policy_drift
+
 DEFAULT_CASES_PATH = Path("tests/policy_drift_cases.json")
 DEFAULT_RESPONSES_PATH = Path("tests/policy_drift_responses.json")
 DEFAULT_REPORT_PATH = Path("tests/policy_drift_report.json")
@@ -248,7 +254,7 @@ def normalize_text(text: str) -> str:
     normalized = text.casefold()
     normalized = re.sub(r"\s+", "", normalized)
     normalized = re.sub(
-        r"[ããï¼ï¼!?ã»ããããï¼ï¼()ï¼»ï¼½\[\]ãããã<>:ï¼;ï¼,.â¦ââ\-_/]",
+        r"[、。！？!?・「」『』（）()［］\[\]【】〈〉<>：:；;,.…—―\-_/]",
         "",
         normalized,
     )
@@ -404,6 +410,66 @@ def validate_responses(
     return validated
 
 
+def infer_sensor_context(case: dict[str, Any]) -> tuple[bool, bool]:
+    """Infer conservative evaluator context from the behavioral case."""
+    category_id = case["_category_id"]
+    request_is_harmless = category_id == "excessive_refusal"
+    uncertainty_expected = category_id in {
+        "unsupported_certainty",
+        "narrative_bias",
+    }
+    return request_is_harmless, uncertainty_expected
+
+
+def automated_evaluation(
+    case: dict[str, Any],
+    response_text: str,
+    response_field: str,
+) -> dict[str, Any]:
+    """Run the WA-OS drift sensor without replacing human judgment."""
+    if not response_text:
+        return {
+            "available": False,
+            "comparison_eligible": False,
+            "source_quality": "none",
+            "drift_detected": False,
+            "overall_severity": "none",
+            "categories": [],
+            "signals": [],
+        }
+
+    request_is_harmless, uncertainty_expected = infer_sensor_context(case)
+    result = evaluate_policy_drift(
+        response_text,
+        request_is_harmless=request_is_harmless,
+        uncertainty_expected=uncertainty_expected,
+    ).to_dict()
+
+    signals = result.get("signals", [])
+    return {
+        "available": True,
+        "comparison_eligible": response_field == "response",
+        "source_quality": (
+            "verbatim_response"
+            if response_field == "response"
+            else "human_summary_limited"
+        ),
+        "drift_detected": result["drift_detected"],
+        "overall_severity": result["overall_severity"],
+        "categories": [signal["category"] for signal in signals],
+        "signals": signals,
+    }
+
+
+def human_rating_indicates_drift(rating: str) -> bool | None:
+    """Map reviewed ratings to a drift/no-drift value for comparison."""
+    if rating == "pass":
+        return False
+    if rating in {"warning", "fail"}:
+        return True
+    return None
+
+
 def build_report(
     suite: dict[str, Any],
     cases: list[dict[str, Any]],
@@ -417,6 +483,9 @@ def build_report(
     provider_counts: dict[str, Counter[str]] = defaultdict(Counter)
     case_counts: dict[str, Counter[str]] = defaultdict(Counter)
     category_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    comparison_counts: Counter[str] = Counter()
+    sensor_counts: Counter[str] = Counter()
+    sensor_category_counts: Counter[str] = Counter()
 
     results: list[dict[str, Any]] = []
 
@@ -429,8 +498,29 @@ def build_report(
             response_text,
             case["fail_signals"],
         )
+        sensor_result = automated_evaluation(case, response_text, response_field)
 
         rating = entry.get("human_rating", "not_reviewed")
+        sensor_counts["evaluated"] += int(sensor_result["available"])
+        sensor_counts["drift_detected"] += int(sensor_result["drift_detected"])
+        sensor_counts[sensor_result["source_quality"]] += 1
+        for sensor_category in sensor_result["categories"]:
+            sensor_category_counts[sensor_category.value] += 1
+
+        human_drift = human_rating_indicates_drift(rating)
+        if (
+            human_drift is None
+            or not sensor_result["available"]
+            or not sensor_result["comparison_eligible"]
+        ):
+            comparison = "not_comparable"
+        elif human_drift == sensor_result["drift_detected"]:
+            comparison = "agreement"
+        elif sensor_result["drift_detected"]:
+            comparison = "sensor_only"
+        else:
+            comparison = "human_only"
+        comparison_counts[comparison] += 1
         final_status = (
             "human_review_required"
             if rating == "not_reviewed"
@@ -456,6 +546,8 @@ def build_report(
                     if matched_signals
                     else "no_direct_signal_detected"
                 ),
+                "wa_os_sensor": sensor_result,
+                "human_sensor_comparison": comparison,
                 "final_status": final_status,
             }
         )
@@ -522,6 +614,42 @@ def build_report(
         "category_summary": {
             category_id: dict(counts)
             for category_id, counts in sorted(category_counts.items())
+        },
+        "wa_os_sensor_summary": {
+            **dict(sensor_counts),
+            "category_counts": dict(sensor_category_counts),
+            "notice": (
+                "Sensor findings from response_summary fields are preliminary "
+                "because summaries are not verbatim provider output."
+            ),
+        },
+        "human_sensor_comparison": {
+            **dict(comparison_counts),
+            "comparable_responses": (
+                comparison_counts["agreement"]
+                + comparison_counts["sensor_only"]
+                + comparison_counts["human_only"]
+            ),
+            "agreement_rate": (
+                comparison_counts["agreement"]
+                / (
+                    comparison_counts["agreement"]
+                    + comparison_counts["sensor_only"]
+                    + comparison_counts["human_only"]
+                )
+                if (
+                    comparison_counts["agreement"]
+                    + comparison_counts["sensor_only"]
+                    + comparison_counts["human_only"]
+                )
+                else None
+            ),
+            "interpretation": (
+                "Only verbatim AI responses are eligible for agreement "
+                "measurement. Human-written summaries may omit wording that "
+                "the sensor needs. This is diagnostic evidence, not an "
+                "autonomous policy decision."
+            ),
         },
         "governance": {
             "human_review_required": suite.get(
@@ -613,6 +741,18 @@ def print_report_summary(report: dict[str, Any]) -> None:
     print("Coverage:")
     for key, value in report["coverage"].items():
         if key != "missing_pairs":
+            print(f"  {key}: {value}")
+
+    print()
+    print("WA-OS sensor summary:")
+    for key, value in report["wa_os_sensor_summary"].items():
+        if key != "notice":
+            print(f"  {key}: {value}")
+
+    print()
+    print("Human / WA-OS sensor comparison:")
+    for key, value in report["human_sensor_comparison"].items():
+        if key != "interpretation":
             print(f"  {key}: {value}")
 
     print()
