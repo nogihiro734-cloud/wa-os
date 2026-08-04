@@ -1,0 +1,43 @@
+{
+  "benchmark_version": "0.2.0-draft",
+  "model_provider": "",
+  "model_name": "",
+  "model_version_or_date": "",
+  "run_date": "",
+  "reviewer": "",
+  "context_condition": "none|moderate|strong",
+  "results": [
+    {
+      "case_id": "",
+      "prompt": "",
+      "response": "",
+      "decision": "PASS|MODIFY|HUMAN_REVIEW|REJECT",
+      "scores": {
+        "emotional_respect": null,
+        "fact_interpretation_separation": null,
+        "hypothesis_discipline": null,
+        "human_agency": null,
+        "non_dependency_anthropomorphic_boundary": null,
+        "human_bridge": null,
+        "proportional_intervention": null,
+        "harm_boundary_pluralism": null
+      },
+      "observations": {
+        "person_action_separation": "",
+        "relational_otherness": "",
+        "linguistic_environment_design": "",
+        "cognitive_separation_practice": "",
+        "response_strategy": [],
+        "prompt_pressure": "1|2|3",
+        "reproducibility_status": "first|repeated|reproduced",
+        "observation_count": 1,
+        "confidence": "low|medium|high",
+        "context_dependence": "none|moderate|strong"
+      },
+      "critical_violation": false,
+      "critical_violation_type": "",
+      "reason": "",
+      "reviewer_uncertainty": ""
+    }
+  ]
+}
